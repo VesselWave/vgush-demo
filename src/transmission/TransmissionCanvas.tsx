@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Eraser, Orbit, Sparkles } from 'lucide-react'
+import { Eraser, Gem, MousePointer2, Sparkles } from 'lucide-react'
 import { createRenderer } from './renderer'
 import { createPaintStore, hexToLinear } from './paint-store'
 
-type Tool = 'light' | 'glass' | 'orbit'
+type Tool = 'move' | 'light' | 'glass'
 const MAX_PAINT_SEGMENTS = 128
 const MAX_PAINT_LENGTH = 3
 const colors = ['#ff4fc3', '#69ddff', '#ffd66b', '#b8ff8a']
@@ -13,7 +13,7 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
   const paintRef = useRef<HTMLCanvasElement>(null)
   const paintStoreRef = useRef(createPaintStore())
   const [error, setError] = useState('')
-  const [tool, setTool] = useState<Tool>('light')
+  const [tool, setTool] = useState<Tool>('move')
   const [color, setColor] = useState(colors[0])
   const [size, setSize] = useState(18)
   const [clearVersion, setClearVersion] = useState(0)
@@ -65,7 +65,7 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
       store.cursorColor = hexToLinear(color)
       store.cursorRadius = size / Math.max(1, canvas.clientHeight) * .52
       store.cursorMaterial = tool === 'glass' ? 1 : 0
-      store.cursorVisible = tool !== 'orbit'
+      store.cursorVisible = tool !== 'move'
       store.version++
       return next
     }
@@ -137,7 +137,7 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
       context.restore()
     }
     const down = (event: PointerEvent) => {
-      if (!event.isPrimary || tool === 'orbit') return
+      if (!event.isPrimary || tool === 'move') return
       drawing = true
       pointerId = event.pointerId
       last = placeCursor(event)
@@ -191,18 +191,20 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
 
   return <div className="canvas-shell transmission-shell">
     {error ? <div className="gpu-error"><span>GPU offline</span><p>{error}</p></div> : <>
-      <canvas ref={canvasRef} style={{ opacity: intensity }} aria-label="Interactive glass transmission demo. Choose a paint tool or orbit the camera." />
-      <canvas ref={paintRef} className={`monolith-paint monolith-paint-${tool}`} aria-label={`${tool} drawing layer`} />
-      <div className="monolith-tools" role="toolbar" aria-label="Monolith drawing tools">
-        <button className={tool === 'light' ? 'active' : ''} onClick={() => setTool('light')} title="Paint light"><Sparkles size={14} /> Light</button>
-        <button className={tool === 'glass' ? 'active' : ''} onClick={() => setTool('glass')} title="Paint glass">◇ Glass</button>
-        <button className={tool === 'orbit' ? 'active' : ''} onClick={() => setTool('orbit')} title="Orbit camera"><Orbit size={14} /> Orbit</button>
+      <canvas ref={canvasRef} style={{ opacity: intensity }} aria-label="Interactive glass transmission demo. Move the camera or choose a paint tool." />
+      <canvas ref={paintRef} className={`monolith-paint monolith-paint-${tool}`} aria-label={`${tool} tool layer`} />
+      <div className="monolith-tools" role="toolbar" aria-label="Glass Monolith tools">
+        <div className="tool-group" aria-label="Choose a tool">
+          <button className={`tool-button ${tool === 'move' ? 'active' : ''}`} onClick={() => setTool('move')} aria-pressed={tool === 'move'} title="Move camera"><MousePointer2 size={15} /> Move</button>
+          <button className={`tool-button ${tool === 'light' ? 'active' : ''}`} onClick={() => setTool('light')} aria-pressed={tool === 'light'} title="Paint light"><Sparkles size={15} /> Light</button>
+          <button className={`tool-button ${tool === 'glass' ? 'active' : ''}`} onClick={() => setTool('glass')} aria-pressed={tool === 'glass'} title="Paint glass"><Gem size={15} /> Glass</button>
+        </div>
         <span className="tool-divider" />
-        <div className="paint-colors" aria-label="Paint color">{colors.map(value => <button key={value} className={color === value ? 'active' : ''} style={{ '--swatch': value } as CSSProperties} onClick={() => setColor(value)} aria-label={`Use ${value}`} />)}</div>
+        <div className="paint-colors" aria-label="Paint color">{colors.map(value => <button key={value} className={color === value ? 'active' : ''} style={{ '--swatch': value } as CSSProperties} onClick={() => setColor(value)} aria-label={`Use ${value}`} aria-pressed={color === value} />)}</div>
         <input aria-label="Brush size" type="range" min="6" max="42" value={size} onChange={event => setSize(Number(event.target.value))} />
-        <button onClick={() => setClearVersion(value => value + 1)} title="Clear drawing"><Eraser size={14} /><span className="tool-label">Clear</span></button>
+        <button className="clear-tool" onClick={() => setClearVersion(value => value + 1)} title="Clear drawing"><Eraser size={15} /><span className="tool-label">Clear</span></button>
       </div>
-      <span className="monolith-hint">{tool === 'orbit' ? 'drag to orbit · scroll to zoom' : `drag to paint ${tool}`}</span>
+      <span className="monolith-hint">{tool === 'move' ? 'drag to rotate · scroll to zoom' : `drag to paint ${tool}`}</span>
     </>}
   </div>
 }

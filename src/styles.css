@@ -45,20 +45,26 @@ h1 { font-size: clamp(50px, 6.2vw, 88px); line-height: .98; letter-spacing: -.04
 .active-demo { animation: demo-in .35s cubic-bezier(.16, 1, .3, 1); }
 .canvas-shell { aspect-ratio: 2 / 1; background: #050505; overflow: hidden; }
 @keyframes demo-in { from { opacity: .7; filter: blur(5px); } to { opacity: 1; filter: blur(0); } }
-canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: default; }
 .radiance-shell, .transmission-shell { position: relative; }
 .draw-hint { position: absolute; left: 50%; bottom: 18px; translate: -50% 0; color: rgba(255,255,255,.8); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
-.monolith-paint { position: absolute; inset: 0; z-index: 2; opacity: 0; cursor: none; }
-.monolith-paint-orbit { pointer-events: none; }
-.monolith-tools { position: absolute; z-index: 3; top: 14px; left: 14px; display: flex; align-items: center; gap: 4px; padding: 5px; background: rgba(5,5,5,.78); border: 1px solid rgba(255,255,255,.16); border-radius: 9px; backdrop-filter: blur(14px); }
-.monolith-tools button { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 5px; color: #aaa; background: transparent; cursor: pointer; font-size: 12px; }
-.monolith-tools button:hover, .monolith-tools button.active { color: #fff; background: rgba(255,255,255,.12); }
+.monolith-paint { position: absolute; inset: 0; z-index: 2; opacity: 0; cursor: default; }
+.monolith-paint-move { pointer-events: none; }
+.monolith-tools { position: absolute; z-index: 3; top: 14px; left: 14px; display: flex; align-items: center; gap: 6px; padding: 5px; background: rgba(5,5,5,.86); border: 1px solid rgba(255,255,255,.16); border-radius: 9px; backdrop-filter: blur(14px); }
+.tool-group { display: flex; align-items: center; gap: 2px; }
+.monolith-tools button { height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 5px; color: #aaa; background: transparent; cursor: pointer; font-size: 12px; }
+.monolith-tools .tool-button { padding: 0 9px; }
+.monolith-tools .tool-button:hover, .monolith-tools .tool-button.active, .monolith-tools .clear-tool:hover { color: #fff; background: rgba(255,255,255,.12); }
+.monolith-tools .tool-button.active { box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.monolith-tools .clear-tool { padding: 0 8px; }
 .monolith-tools input[type="range"] { width: 74px; accent-color: #fff; }
-.tool-divider { width: 1px; height: 20px; margin: 0 4px; background: rgba(255,255,255,.16); }
-.paint-colors { display: flex; gap: 3px; }
-.paint-colors button { width: 22px; padding: 0; position: relative; }
-.paint-colors button::after { content: ''; width: 11px; height: 11px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 8px color-mix(in srgb, var(--swatch) 70%, transparent); }
-.paint-colors button.active::after { outline: 1px solid #fff; outline-offset: 2px; }
+.tool-divider { width: 1px; height: 20px; margin: 0 2px; background: rgba(255,255,255,.16); }
+.paint-colors { display: flex; align-items: center; gap: 2px; padding: 0 2px; }
+.paint-colors button { width: 28px; padding: 0; position: relative; }
+.paint-colors button::after { content: ''; width: 12px; height: 12px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 8px color-mix(in srgb, var(--swatch) 60%, transparent); }
+.paint-colors button:hover::after { scale: 1.12; }
+.paint-colors button.active::before { content: ''; position: absolute; width: 20px; height: 20px; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; }
+.paint-colors button.active::after { box-shadow: 0 0 8px color-mix(in srgb, var(--swatch) 70%, transparent), 0 0 0 2px #111; }
 .monolith-hint { position: absolute; z-index: 3; left: 50%; bottom: 15px; translate: -50% 0; color: rgba(255,255,255,.8); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; pointer-events: none; }
 .gpu-error { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #888; text-align: center; padding: 24px; }
 .gpu-error span { color: #fff; font-weight: 500; }
