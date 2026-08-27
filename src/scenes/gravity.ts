@@ -1,0 +1,9 @@
+export const gravity = /* wgsl */ `
+    var uv = p;
+    let m = vec2f(mouse.x, -mouse.y) * vec2f(aspect, 1.);
+    let d = distance(uv, m);
+    uv += normalize(uv - m + .0001) * (.045 / (d + .08));
+    let grid = min(abs(fract(uv.x * 9.) - .5), abs(fract(uv.y * 9.) - .5));
+    let lines = smoothstep(.055, .015, grid);
+    let well = .018 / max(.008, d * d);
+    col = vec3f(.015) + lines * vec3f(.18, .2, .24) + well * vec3f(.6, .18, 1.);`

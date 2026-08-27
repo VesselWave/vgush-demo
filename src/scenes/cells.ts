@@ -1,0 +1,9 @@
+export const cells = /* wgsl */ `
+    let q = p * 5.;
+    let id = floor(q);
+    let f = fract(q) - .5;
+    let phase = sin(id.x * 7.3 + id.y * 11.7 + t + length(p-mouse)*3.);
+    let d = length(f) - (.2 + .09 * phase);
+    let cell = smoothstep(.035, -.035, d);
+    let pulse = .55 + .45 * sin(t * 1.8 + id.x + id.y * .7);
+    col = vec3f(.025) + cell * mix(vec3f(.1, .35, 1.), vec3f(1., .12, .35), pulse);`

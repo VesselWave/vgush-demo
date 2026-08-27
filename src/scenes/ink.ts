@@ -1,0 +1,9 @@
+export const ink = /* wgsl */ `
+    let inkp = p - vec2f(mouse.x, -mouse.y)*.12;
+    let a = atan2(inkp.y, inkp.x);
+    let r = length(inkp);
+    let folds = sin(a * 6. + t + r * 11.) * .08;
+    let edge = smoothstep(.025, 0., abs(r - .43 - folds));
+    let fill = smoothstep(.5 + folds, .18, r);
+    let grain = sin(p.x * 140. + sin(p.y * 70.)) * .025;
+    col = vec3f(.965) * (1. - fill) + vec3f(.025 + grain) * fill + edge * vec3f(.55, .1, 1.);`
