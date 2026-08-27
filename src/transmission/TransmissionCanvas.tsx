@@ -5,7 +5,6 @@ import { createPaintStore, hexToLinear } from './paint-store'
 
 type Tool = 'move' | 'light' | 'glass'
 const MAX_PAINT_SEGMENTS = 128
-const MAX_PAINT_LENGTH = 3
 const colors = ['#ff4fc3', '#69ddff', '#ffd66b', '#b8ff8a']
 
 export function TransmissionCanvas({ intensity }: { intensity: number }) {
@@ -79,21 +78,10 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
         material: tool === 'glass' ? 1 : 0,
       })
       const material = tool === 'glass' ? 1 : 0
-      const strokeLength = (segment: (typeof store.segments)[number]) => Math.hypot(
-        segment.to[0] - segment.from[0],
-        segment.to[1] - segment.from[1],
-      )
-      let materialCount = 0
-      let totalLength = 0
-      for (const segment of store.segments) {
-        if (segment.material !== material) continue
-        materialCount++
-        totalLength += strokeLength(segment)
-      }
-      while (materialCount > MAX_PAINT_SEGMENTS || totalLength > MAX_PAINT_LENGTH) {
+      let materialCount = store.segments.filter(segment => segment.material === material).length
+      while (materialCount > MAX_PAINT_SEGMENTS) {
         const oldest = store.segments.findIndex(segment => segment.material === material)
         if (oldest < 0) break
-        totalLength -= strokeLength(store.segments[oldest])
         store.segments.splice(oldest, 1)
         materialCount--
       }
@@ -147,11 +135,21 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
     const move = (event: PointerEvent) => {
       const next = placeCursor(event)
       if (!drawing || event.pointerId !== pointerId) return
-      // Do not spend a GPU segment on every high-frequency pointer event. Sampling
-      // by brush size preserves the same curve while keeping old strokes resident.
-      if (Math.hypot(next.x - last.x, next.y - last.y) < Math.max(2, size * .22)) return
-      stroke(last, next)
-      last = next
+      // Pointer events can be far apart during a fast drag. Split long moves so
+      // each GPU capsule covers a bounded distance and the segment budget remains
+      // tied to rendered geometry rather than the browser's event frequency.
+      const distance = Math.hypot(next.x - last.x, next.y - last.y)
+      if (distance < Math.max(2, size * .22)) return
+      const from = last
+      const steps = Math.ceil(distance / Math.max(4, size * .5))
+      for (let step = 1; step <= steps; step++) {
+        const to = {
+          x: from.x + (next.x - from.x) * step / steps,
+          y: from.y + (next.y - from.y) * step / steps,
+        }
+        stroke(last, to)
+        last = to
+      }
     }
     const end = (event: PointerEvent) => {
       if (event.pointerId !== pointerId) return
