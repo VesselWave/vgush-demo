@@ -2,6 +2,7 @@ import { initFromDevice, surface, type Gpu, type Surface } from "vgpu";
 import { getSharedGpuDevice } from "../gpuDevice";
 
 import { cameraView } from "./camera";
+import type { PaintStore } from "./paint-store";
 import { installOrbitInput } from "./pointer-input";
 import {
   DEFAULT_CONTROLS,
@@ -16,10 +17,11 @@ import {
 
 interface RendererOptions {
   readonly canvas: HTMLCanvasElement;
+  readonly paintStore?: PaintStore;
   readonly initialControls?: Readonly<TransmissionControls>;
 }
 
-export function createRenderer({ canvas, initialControls }: RendererOptions) {
+export function createRenderer({ canvas, paintStore, initialControls }: RendererOptions) {
   let disposed = false;
   const controls = normalizeControls(initialControls ?? DEFAULT_CONTROLS);
   let gpu: Gpu | undefined;
@@ -63,7 +65,8 @@ export function createRenderer({ canvas, initialControls }: RendererOptions) {
               aspectOf(currentOutput),
               currentInput.radius
             ),
-          controls
+          controls,
+          paintStore
         );
       } catch (error) {
         fail(error);

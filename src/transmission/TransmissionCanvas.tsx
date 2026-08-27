@@ -1,14 +1,26 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Eraser, Orbit, Sparkles } from 'lucide-react'
 import { createRenderer } from './renderer'
+import { createPaintStore, hexToLinear } from './paint-store'
+
+type Tool = 'light' | 'glass' | 'orbit'
+const colors = ['#ff4fc3', '#69ddff', '#ffd66b', '#b8ff8a']
 
 export function TransmissionCanvas({ intensity }: { intensity: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const paintRef = useRef<HTMLCanvasElement>(null)
+  const paintStoreRef = useRef(createPaintStore())
   const [error, setError] = useState('')
+  const [tool, setTool] = useState<Tool>('light')
+  const [color, setColor] = useState(colors[0])
+  const [size, setSize] = useState(18)
+  const [clearVersion, setClearVersion] = useState(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-    const renderer = createRenderer({ canvas })
+    const paintCanvas = paintRef.current
+    if (!canvas || !paintCanvas) return
+    const renderer = createRenderer({ canvas, paintStore: paintStoreRef.current })
     renderer.ready?.catch?.((reason: unknown) => {
       const message = reason instanceof Error ? reason.message : String(reason)
       setError(message || 'The transmission renderer could not start.')
@@ -16,7 +28,158 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
     return () => renderer.dispose()
   }, [])
 
+  useEffect(() => {
+    const canvas = paintRef.current
+    if (!canvas) return
+    const context = canvas.getContext('2d')
+    if (!context) return
+    let drawing = false
+    let pointerId = -1
+    let last = { x: 0, y: 0 }
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect()
+      const dpr = Math.min(devicePixelRatio, 2)
+      const width = Math.max(1, Math.floor(rect.width * dpr))
+      const height = Math.max(1, Math.floor(rect.height * dpr))
+      if (canvas.width === width && canvas.height === height) return
+      const snapshot = document.createElement('canvas')
+      snapshot.width = canvas.width
+      snapshot.height = canvas.height
+      snapshot.getContext('2d')?.drawImage(canvas, 0, 0)
+      canvas.width = width
+      canvas.height = height
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+      context.drawImage(snapshot, 0, 0, snapshot.width, snapshot.height, 0, 0, rect.width, rect.height)
+    }
+    const point = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    }
+    const placeCursor = (event: PointerEvent) => {
+      const next = point(event)
+      const store = paintStoreRef.current
+      store.cursor = [next.x / Math.max(1, canvas.clientWidth), next.y / Math.max(1, canvas.clientHeight)]
+      store.cursorColor = hexToLinear(color)
+      store.cursorRadius = size / Math.max(1, canvas.clientHeight) * .52
+      store.cursorMaterial = tool === 'glass' ? 1 : 0
+      store.cursorVisible = tool !== 'orbit'
+      store.version++
+      return next
+    }
+    const stroke = (from: typeof last, to: typeof last) => {
+      const store = paintStoreRef.current
+      store.segments.push({
+        from: [from.x / Math.max(1, canvas.clientWidth), from.y / Math.max(1, canvas.clientHeight)],
+        to: [to.x / Math.max(1, canvas.clientWidth), to.y / Math.max(1, canvas.clientHeight)],
+        color: hexToLinear(color),
+        radius: size / Math.max(1, canvas.clientHeight) * .52,
+        material: tool === 'glass' ? 1 : 0,
+      })
+      if (store.segments.length > 48) store.segments.splice(0, store.segments.length - 48)
+      store.version++
+      context.save()
+      context.lineCap = 'round'
+      context.lineJoin = 'round'
+      context.lineWidth = size
+      context.strokeStyle = color
+      context.beginPath()
+      context.moveTo(from.x, from.y)
+      context.lineTo(to.x, to.y)
+      if (tool === 'light') {
+        context.globalCompositeOperation = 'screen'
+        context.shadowColor = color
+        context.shadowBlur = size * 1.8
+        context.globalAlpha = .82
+        context.stroke()
+        context.shadowBlur = size * .45
+        context.lineWidth = Math.max(2, size * .28)
+        context.globalAlpha = .95
+        context.stroke()
+      } else {
+        context.globalCompositeOperation = 'screen'
+        context.globalAlpha = .2
+        context.shadowColor = '#d9f7ff'
+        context.shadowBlur = size
+        context.lineWidth = size * 1.5
+        context.stroke()
+        context.globalAlpha = .68
+        context.shadowBlur = 2
+        context.strokeStyle = color
+        context.lineWidth = Math.max(3, size * .42)
+        context.stroke()
+        context.globalAlpha = .9
+        context.strokeStyle = '#ffffff'
+        context.lineWidth = 1
+        context.translate(0, -size * .16)
+        context.stroke()
+      }
+      context.restore()
+    }
+    const down = (event: PointerEvent) => {
+      if (!event.isPrimary || tool === 'orbit') return
+      drawing = true
+      pointerId = event.pointerId
+      last = placeCursor(event)
+      canvas.setPointerCapture(pointerId)
+      stroke(last, last)
+    }
+    const move = (event: PointerEvent) => {
+      const next = placeCursor(event)
+      if (!drawing || event.pointerId !== pointerId) return
+      stroke(last, next)
+      last = next
+    }
+    const end = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      drawing = false
+      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId)
+      pointerId = -1
+    }
+
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(canvas)
+    canvas.addEventListener('pointerdown', down)
+    canvas.addEventListener('pointermove', move)
+    canvas.addEventListener('pointerup', end)
+    const leave = () => {
+      paintStoreRef.current.cursorVisible = false
+      paintStoreRef.current.version++
+    }
+    canvas.addEventListener('pointercancel', end)
+    canvas.addEventListener('pointerleave', leave)
+    return () => {
+      observer.disconnect()
+      canvas.removeEventListener('pointerdown', down)
+      canvas.removeEventListener('pointermove', move)
+      canvas.removeEventListener('pointerup', end)
+      canvas.removeEventListener('pointercancel', end)
+      canvas.removeEventListener('pointerleave', leave)
+    }
+  }, [tool, color, size])
+
+  useEffect(() => {
+    const canvas = paintRef.current
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+    paintStoreRef.current.segments.length = 0
+    paintStoreRef.current.version++
+  }, [clearVersion])
+
   return <div className="canvas-shell transmission-shell">
-    {error ? <div className="gpu-error"><span>GPU offline</span><p>{error}</p></div> : <canvas ref={canvasRef} style={{ opacity: intensity }} aria-label="Interactive glass transmission demo. Drag to orbit and scroll to zoom." />}
+    {error ? <div className="gpu-error"><span>GPU offline</span><p>{error}</p></div> : <>
+      <canvas ref={canvasRef} style={{ opacity: intensity }} aria-label="Interactive glass transmission demo. Choose a paint tool or orbit the camera." />
+      <canvas ref={paintRef} className={`monolith-paint monolith-paint-${tool}`} aria-label={`${tool} drawing layer`} />
+      <div className="monolith-tools" role="toolbar" aria-label="Monolith drawing tools">
+        <button className={tool === 'light' ? 'active' : ''} onClick={() => setTool('light')} title="Paint light"><Sparkles size={14} /> Light</button>
+        <button className={tool === 'glass' ? 'active' : ''} onClick={() => setTool('glass')} title="Paint glass">◇ Glass</button>
+        <button className={tool === 'orbit' ? 'active' : ''} onClick={() => setTool('orbit')} title="Orbit camera"><Orbit size={14} /> Orbit</button>
+        <span className="tool-divider" />
+        <div className="paint-colors" aria-label="Paint color">{colors.map(value => <button key={value} className={color === value ? 'active' : ''} style={{ '--swatch': value } as CSSProperties} onClick={() => setColor(value)} aria-label={`Use ${value}`} />)}</div>
+        <input aria-label="Brush size" type="range" min="6" max="42" value={size} onChange={event => setSize(Number(event.target.value))} />
+        <button onClick={() => setClearVersion(value => value + 1)} title="Clear drawing"><Eraser size={14} /><span className="tool-label">Clear</span></button>
+      </div>
+      <span className="monolith-hint">{tool === 'orbit' ? 'drag to orbit · scroll to zoom' : `drag to paint ${tool}`}</span>
+    </>}
   </div>
 }

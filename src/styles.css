@@ -33,13 +33,29 @@ h1 { font-size: clamp(50px, 6.2vw, 88px); line-height: .98; letter-spacing: -.04
 .gallery { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
 .demo { min-width: 0; border-bottom: 1px solid var(--line); }
 .demo:nth-child(odd) { border-right: 1px solid var(--line); }
-.demo-3, .demo-6 { grid-column: 1 / -1; }
+.demo-3, .demo-6, .demo-9 { grid-column: 1 / -1; }
+.demo-9 { border-right: 0 !important; }
+.demo-9 .canvas-shell { aspect-ratio: 2.15; }
 .demo-6 { display: grid; grid-template-columns: 1.45fr .55fr; }
 .demo-6 .canvas-shell { aspect-ratio: 1.75; }
 .demo-6 .demo-copy { display: flex; flex-direction: column; justify-content: center; }
 .canvas-shell { aspect-ratio: 1.35; background: #050505; overflow: hidden; }
 .demo-3 .canvas-shell { aspect-ratio: 2.25; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.radiance-shell, .transmission-shell { position: relative; }
+.draw-hint { position: absolute; left: 50%; bottom: 18px; translate: -50% 0; color: rgba(255,255,255,.8); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
+.monolith-paint { position: absolute; inset: 0; z-index: 2; opacity: 0; cursor: none; }
+.monolith-paint-orbit { pointer-events: none; }
+.monolith-tools { position: absolute; z-index: 3; top: 14px; left: 14px; display: flex; align-items: center; gap: 4px; padding: 5px; background: rgba(5,5,5,.78); border: 1px solid rgba(255,255,255,.16); border-radius: 9px; backdrop-filter: blur(14px); }
+.monolith-tools button { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 5px; color: #aaa; background: transparent; cursor: pointer; font-size: 12px; }
+.monolith-tools button:hover, .monolith-tools button.active { color: #fff; background: rgba(255,255,255,.12); }
+.monolith-tools input[type="range"] { width: 74px; accent-color: #fff; }
+.tool-divider { width: 1px; height: 20px; margin: 0 4px; background: rgba(255,255,255,.16); }
+.paint-colors { display: flex; gap: 3px; }
+.paint-colors button { width: 22px; padding: 0; position: relative; }
+.paint-colors button::after { content: ''; width: 11px; height: 11px; border-radius: 50%; background: var(--swatch); box-shadow: 0 0 8px color-mix(in srgb, var(--swatch) 70%, transparent); }
+.paint-colors button.active::after { outline: 1px solid #fff; outline-offset: 2px; }
+.monolith-hint { position: absolute; z-index: 3; left: 50%; bottom: 15px; translate: -50% 0; color: rgba(255,255,255,.8); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; pointer-events: none; }
 .gpu-error { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #888; text-align: center; padding: 24px; }
 .gpu-error span { color: #fff; font-weight: 500; }
 .gpu-error p { font-size: 13px; max-width: 300px; }
@@ -69,9 +85,12 @@ footer > a:last-child { justify-self: end; display: flex; align-items: center; g
   .hero-actions a, .hero-actions button { justify-content: center; }
   .gallery { display: block; }
   .demo:nth-child(odd) { border-right: 0; }
-  .demo-3 .canvas-shell, .canvas-shell { aspect-ratio: 1.1; }
+  .demo-3 .canvas-shell, .demo-9 .canvas-shell, .canvas-shell { aspect-ratio: 1.1; }
   .demo-6 { display: block; }
   .demo-6 .canvas-shell { aspect-ratio: 1.1; }
+  .monolith-tools { right: 10px; left: 10px; overflow-x: auto; }
+  .monolith-tools input[type="range"], .tool-label { display: none; }
+  .monolith-tools button { flex: none; }
   .demo-copy { min-height: 0; grid-template-columns: 1fr; padding: 22px 20px 28px; }
   .tech { grid-column: 1; }
   .closer { padding: 70px 24px; align-items: flex-start; flex-direction: column; gap: 40px; }

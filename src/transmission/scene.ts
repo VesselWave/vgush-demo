@@ -13,6 +13,7 @@ import {
   type Target,
 } from "vgpu";
 import type { Texture } from "vgpu/core";
+import type { PaintStore } from "./paint-store";
 import { box, plane } from "vgpu/scene";
 
 import { FLOOR_MATRIX, MODEL_MATRIX, type CameraView } from "./camera";
@@ -23,6 +24,7 @@ import backgroundSource from "./scene-background.wgsl?raw";
 import floorSource from "./floor.wgsl?raw";
 import glassSource from "./glass.wgsl?raw";
 import presentSource from "./present.wgsl?raw";
+import paintSource from "./paint.wgsl?raw";
 
 // The docs app resolves WGSL imports at build time. Vite's raw loader does not,
 // so inline the shared module before vgpu compiles each shader.
@@ -36,6 +38,7 @@ const backgroundWgsl = inlineEnvCommon(backgroundSource);
 const floorWgsl = inlineEnvCommon(floorSource);
 const glassWgsl = inlineEnvCommon(glassSource);
 const presentWgsl = inlineEnvCommon(presentSource);
+const paintWgsl = paintSource;
 
 type Output = Surface | Target;
 
@@ -106,6 +109,7 @@ export interface Scene {
   readonly background: Draw;
   readonly floor: Draw;
   readonly glass: Draw;
+  readonly paint: Draw;
   readonly present: Effect;
   readonly blurs: readonly BlurPair[];
   targets: Targets;
@@ -173,6 +177,13 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
     });
     glass.set({ env_tex: env, env_samp: envSampler });
 
+    const paint = draw(gpu, {
+      shader: paintWgsl,
+      vertices: 3,
+      cull: "none",
+      depth: { write: true, compare: "less" },
+    });
+
     const present = effect(gpu, presentWgsl);
 
     const blurs: BlurPair[] = [];
@@ -191,6 +202,7 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
       background,
       floor,
       glass,
+      paint,
       present,
       blurs,
       targets,
@@ -201,6 +213,7 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
       background.compile(targets.hdr),
       floor.compile(targets.hdr),
       glass.compile(targets.hdr),
+      paint.compile(targets.hdr),
       present.compile({ colors: [output.format] }),
       ...blurs.flatMap((pair) => [
         pair.horizontal.compile({ colors: [HDR_FORMAT] }),
@@ -426,7 +439,8 @@ export function renderScene(
   scene: Scene,
   output: Output,
   camera: CameraView | (() => CameraView),
-  controls: TransmissionControls
+  controls: TransmissionControls,
+  paintStore?: PaintStore
 ): void {
   frame(gpu, (currentFrame) => {
     const view = typeof camera === "function" ? camera() : camera;
@@ -447,6 +461,62 @@ export function renderScene(
         camera_position: view.position,
       },
     });
+    const distance = Math.hypot(view.position[0], view.position[1] - 0.05, view.position[2]);
+    const currentPlane = {
+      right: [...view.right],
+      up: [...view.up],
+      width: 2 * distance * view.tanHalfFov * view.aspect,
+      height: 2 * distance * view.tanHalfFov,
+    };
+    const toWorld = (uv: readonly [number, number]): [number, number, number] => [
+      (uv[0] - .5) * currentPlane.right[0] * currentPlane.width + (.5 - uv[1]) * currentPlane.up[0] * currentPlane.height,
+      .05 + (uv[0] - .5) * currentPlane.right[1] * currentPlane.width + (.5 - uv[1]) * currentPlane.up[1] * currentPlane.height,
+      (uv[0] - .5) * currentPlane.right[2] * currentPlane.width + (.5 - uv[1]) * currentPlane.up[2] * currentPlane.height,
+    ];
+    for (const segment of paintStore?.segments ?? []) {
+      if (!segment.worldFrom) {
+        segment.worldFrom = toWorld(segment.from);
+        segment.worldTo = toWorld(segment.to);
+        segment.worldRadius = segment.radius * currentPlane.height;
+      }
+    }
+    const visibleSegments = paintStore?.segments.slice(-48) ?? [];
+    const segmentA = Array.from({ length: 48 }, (_, index) => {
+      const segment = visibleSegments[index];
+      return segment ? [...segment.worldFrom!, segment.worldRadius!] : [0, 0, 0, 0];
+    });
+    const segmentB = Array.from({ length: 48 }, (_, index) => {
+      const segment = visibleSegments[index];
+      return segment ? [...segment.worldTo!, segment.material] : [0, 0, 0, 0];
+    });
+    const segmentC = Array.from({ length: 48 }, (_, index) => {
+      const segment = visibleSegments[index];
+      return segment ? [...segment.color, 0] : [0, 0, 0, 0];
+    });
+    scene.paint.set({
+      paint: {
+        view_projection: view.viewProjection,
+        camera_position: view.position,
+        tan_half_fov: view.tanHalfFov,
+        forward: view.forward,
+        aspect: view.aspect,
+        camera_right: view.right,
+        count: visibleSegments.length,
+        camera_up: view.up,
+        cursor_visible: paintStore?.cursorVisible ? 1 : 0,
+        plane_center: [0, 0.05, 0],
+        plane_width: currentPlane.width,
+        plane_right: currentPlane.right,
+        plane_height: currentPlane.height,
+        plane_up: currentPlane.up,
+        cursor_radius: (paintStore?.cursorRadius ?? 0) * currentPlane.height,
+        cursor: [...(paintStore?.cursor ?? [.5, .5]), paintStore?.cursorMaterial ?? 0, 0],
+        cursor_color: [...(paintStore?.cursorColor ?? [1, 1, 1]), 0],
+        segment_a: segmentA,
+        segment_b: segmentB,
+        segment_c: segmentC,
+      },
+    });
     scene.glass.set({
       glass: {
         ...GLASS,
@@ -464,6 +534,7 @@ export function renderScene(
     currentFrame.pass({ target: targets.hdr, clear: [0, 0, 0, 1] }, (pass) => {
       pass.draw(scene.background);
       pass.draw(scene.floor);
+      pass.draw(scene.paint);
     });
     for (let index = 0; index < targets.chain.length; index++) {
       const level = targets.chain[index];
