@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { ArrowUpRight, CodeIcon, Pause, Play, RotateCcw } from 'lucide-react'
 import { GpuCanvas, type Scene } from './GpuCanvas'
+import { TransmissionCanvas } from './transmission/TransmissionCanvas'
 import './styles.css'
 
 const demos: { scene: Scene; name: string; description: string; detail: string }[] = [
@@ -10,7 +11,7 @@ const demos: { scene: Scene; name: string; description: string; detail: string }
   { scene: 'orbit', name: 'Orbit Choir', description: 'Five resonant rings phase around a white-hot center of gravity.', detail: 'Additive light · Analytic curves' },
   { scene: 'cells', name: 'Electric Colony', description: 'A field of soft cells pulses between cobalt and hot pink.', detail: 'Tile functions · Color interpolation' },
   { scene: 'gravity', name: 'Gravity Paper', description: 'Move your pointer to pull a precise grid into a luminous well.', detail: 'Pointer uniforms · Spatial distortion' },
-  { scene: 'prism', name: 'Glass Monolith', description: 'A raymarched prism turns slowly in an electric violet atmosphere.', detail: '3D raymarching · Box distance field' },
+  { scene: 'prism', name: 'Glass Monolith', description: 'Drag to orbit a glass cube that refracts a separately rendered scene through a blurred texture pyramid.', detail: 'Multi-pass transmission · Fresnel · Dispersion' },
   { scene: 'torus', name: 'Signal Torus', description: 'A striped energy ring turns across all three axes. Point to steer its tilt.', detail: '3-axis rotation · Polar shading' },
   { scene: 'city', name: 'Night Blocks', description: 'An endless procedural city rises from hashed blocks and lit windows.', detail: '3D raymarching · Procedural architecture' },
 ]
@@ -41,7 +42,9 @@ function App() {
 
       <section className="gallery" id="experiments" aria-label="WebGPU experiments">
         {demos.map((demo, index) => <article className={`demo demo-${index + 1}`} key={`${demo.scene}-${key}`}>
-          <GpuCanvas scene={demo.scene} intensity={running ? 1 : .25} />
+          {demo.scene === 'prism'
+            ? <TransmissionCanvas intensity={running ? 1 : .25} />
+            : <GpuCanvas scene={demo.scene} intensity={running ? 1 : .25} />}
           <div className="demo-copy">
             <div><span className="index">{String(index + 1).padStart(2, '0')}</span><h2>{demo.name}</h2></div>
             <p>{demo.description}</p>

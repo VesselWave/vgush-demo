@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getSharedGpuDevice } from './gpuDevice'
 
 const vertex = /* wgsl */ `
 @vertex fn main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -34,9 +35,7 @@ export function GpuCanvas({ scene, intensity }: { scene: Scene; intensity: numbe
     async function start() {
       const gpu = navigator.gpu
       if (!gpu) { setError('WebGPU is not available in this browser.'); return }
-      const adapter = await gpu.requestAdapter()
-      if (!adapter) { setError('No compatible GPU adapter was found.'); return }
-      const device: any = await adapter.requestDevice()
+      const device: any = await getSharedGpuDevice()
       const context: any = canvas!.getContext('webgpu')
       const format = gpu.getPreferredCanvasFormat()
       context.configure({ device, format, alphaMode: 'opaque' })
