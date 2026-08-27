@@ -61,6 +61,7 @@ const ENV_SIZE: readonly [number, number] = [2048, 1024];
 const ENV_LEVELS = 8;
 const SCENE_LEVELS = 8;
 const BLUR_RADIUS = 1.15;
+const MAX_PAINT_SEGMENTS = 128;
 const CUBE_SIZE = 1.3;
 const FLOOR_SIZE = 90;
 
@@ -109,7 +110,8 @@ export interface Scene {
   readonly background: Draw;
   readonly floor: Draw;
   readonly glass: Draw;
-  readonly paint: Draw;
+  readonly paintLight: Draw;
+  readonly paintGlass: Draw;
   readonly present: Effect;
   readonly blurs: readonly BlurPair[];
   targets: Targets;
@@ -177,11 +179,17 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
     });
     glass.set({ env_tex: env, env_samp: envSampler });
 
-    const paint = draw(gpu, {
+    const paintLight = draw(gpu, {
       shader: paintWgsl,
       vertices: 3,
       cull: "none",
       depth: { write: true, compare: "less" },
+    });
+    const paintGlass = draw(gpu, {
+      shader: paintWgsl,
+      vertices: 3,
+      cull: "none",
+      depth: { write: false, compare: "less" },
     });
 
     const present = effect(gpu, presentWgsl);
@@ -202,7 +210,8 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
       background,
       floor,
       glass,
-      paint,
+      paintLight,
+      paintGlass,
       present,
       blurs,
       targets,
@@ -213,7 +222,8 @@ export async function createScene(gpu: Gpu, output: Output): Promise<Scene> {
       background.compile(targets.hdr),
       floor.compile(targets.hdr),
       glass.compile(targets.hdr),
-      paint.compile(targets.hdr),
+      paintLight.compile(targets.hdr),
+      paintGlass.compile(targets.hdr),
       present.compile({ colors: [output.format] }),
       ...blurs.flatMap((pair) => [
         pair.horizontal.compile({ colors: [HDR_FORMAT] }),
@@ -396,6 +406,14 @@ function bindTargets(scene: Scene): void {
     scene_tex: targets.pyramid,
     scene_samp: scene.pyramidSampler,
   });
+  scene.paintLight.set({
+    scene_tex: targets.pyramid,
+    scene_samp: scene.pyramidSampler,
+  });
+  scene.paintGlass.set({
+    scene_tex: targets.pyramid,
+    scene_samp: scene.pyramidSampler,
+  });
   scene.present.set({
     color_tex: targets.hdr,
     color_samp: scene.pyramidSampler,
@@ -454,13 +472,6 @@ export function renderScene(
         up: view.up,
       },
     });
-    scene.floor.set({
-      floor_uniforms: {
-        view_projection: view.viewProjection,
-        model: FLOOR_MATRIX,
-        camera_position: view.position,
-      },
-    });
     const distance = Math.hypot(view.position[0], view.position[1] - 0.05, view.position[2]);
     const currentPlane = {
       right: [...view.right],
@@ -480,43 +491,55 @@ export function renderScene(
         segment.worldRadius = segment.radius * currentPlane.height;
       }
     }
-    const visibleSegments = paintStore?.segments.slice(-48) ?? [];
-    const segmentA = Array.from({ length: 48 }, (_, index) => {
+    const visibleSegments = paintStore?.segments.slice(-MAX_PAINT_SEGMENTS) ?? [];
+    const segmentA = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
       const segment = visibleSegments[index];
       return segment ? [...segment.worldFrom!, segment.worldRadius!] : [0, 0, 0, 0];
     });
-    const segmentB = Array.from({ length: 48 }, (_, index) => {
+    const segmentB = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
       const segment = visibleSegments[index];
       return segment ? [...segment.worldTo!, segment.material] : [0, 0, 0, 0];
     });
-    const segmentC = Array.from({ length: 48 }, (_, index) => {
+    const segmentC = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
       const segment = visibleSegments[index];
       return segment ? [...segment.color, 0] : [0, 0, 0, 0];
     });
-    scene.paint.set({
-      paint: {
+    scene.floor.set({
+      floor_uniforms: {
         view_projection: view.viewProjection,
+        model: FLOOR_MATRIX,
         camera_position: view.position,
-        tan_half_fov: view.tanHalfFov,
-        forward: view.forward,
-        aspect: view.aspect,
-        camera_right: view.right,
-        count: visibleSegments.length,
-        camera_up: view.up,
-        cursor_visible: paintStore?.cursorVisible ? 1 : 0,
-        plane_center: [0, 0.05, 0],
-        plane_width: currentPlane.width,
-        plane_right: currentPlane.right,
-        plane_height: currentPlane.height,
-        plane_up: currentPlane.up,
-        cursor_radius: (paintStore?.cursorRadius ?? 0) * currentPlane.height,
-        cursor: [...(paintStore?.cursor ?? [.5, .5]), paintStore?.cursorMaterial ?? 0, 0],
-        cursor_color: [...(paintStore?.cursorColor ?? [1, 1, 1]), 0],
-        segment_a: segmentA,
-        segment_b: segmentB,
-        segment_c: segmentC,
+        light_count: visibleSegments.length,
+        light_a: segmentA,
+        light_b: segmentB,
+        light_color: segmentC,
       },
     });
+    const paintUniforms = {
+      view_projection: view.viewProjection,
+      camera_position: view.position,
+      tan_half_fov: view.tanHalfFov,
+      forward: view.forward,
+      aspect: view.aspect,
+      camera_right: view.right,
+      count: visibleSegments.length,
+      camera_up: view.up,
+      cursor_visible: paintStore?.cursorVisible ? 1 : 0,
+      plane_center: [0, 0.05, 0],
+      plane_width: currentPlane.width,
+      plane_right: currentPlane.right,
+      plane_height: currentPlane.height,
+      plane_up: currentPlane.up,
+      cursor_radius: (paintStore?.cursorRadius ?? 0) * currentPlane.height,
+      cursor: [...(paintStore?.cursor ?? [.5, .5]), paintStore?.cursorMaterial ?? 0, 0],
+      cursor_color: [...(paintStore?.cursorColor ?? [1, 1, 1]), 0],
+      scene_levels: targets.chain.length + 1,
+      segment_a: segmentA,
+      segment_b: segmentB,
+      segment_c: segmentC,
+    };
+    scene.paintLight.set({ paint: { ...paintUniforms, render_material: 0 } });
+    scene.paintGlass.set({ paint: { ...paintUniforms, render_material: 1 } });
     scene.glass.set({
       glass: {
         ...GLASS,
@@ -528,13 +551,17 @@ export function renderScene(
         dispersion: controls.dispersion ? 1 : 0,
         refraction_mode: controls.refraction === "double" ? 1 : 0,
         scene_levels: targets.chain.length + 1,
+        light_count: visibleSegments.length,
+        light_a: segmentA,
+        light_b: segmentB,
+        light_color: segmentC,
       },
     });
 
     currentFrame.pass({ target: targets.hdr, clear: [0, 0, 0, 1] }, (pass) => {
       pass.draw(scene.background);
       pass.draw(scene.floor);
-      pass.draw(scene.paint);
+      pass.draw(scene.paintLight);
     });
     for (let index = 0; index < targets.chain.length; index++) {
       const level = targets.chain[index];
@@ -551,9 +578,10 @@ export function renderScene(
   copyPyramid(gpu, targets);
 
   frame(gpu, (currentFrame) => {
-    currentFrame.pass({ target: targets.hdr, clear: false }, (pass) =>
-      pass.draw(scene.glass)
-    );
+    currentFrame.pass({ target: targets.hdr, clear: false }, (pass) => {
+      pass.draw(scene.glass);
+      pass.draw(scene.paintGlass);
+    });
     currentFrame.pass({ target: output }, (pass) => pass.draw(scene.present));
   });
 }

@@ -1,4 +1,4 @@
-const MAX_SEGMENTS: i32 = 48;
+const MAX_SEGMENTS: i32 = 128;
 
 struct PaintScene {
   view_projection: mat4x4f,
@@ -18,11 +18,15 @@ struct PaintScene {
   cursor_radius: f32,
   cursor: vec4f,
   cursor_color: vec4f,
-  segment_a: array<vec4f, 48>,
-  segment_b: array<vec4f, 48>,
-  segment_c: array<vec4f, 48>,
+  render_material: f32,
+  scene_levels: f32,
+  segment_a: array<vec4f, 128>,
+  segment_b: array<vec4f, 128>,
+  segment_c: array<vec4f, 128>,
 };
 @group(0) @binding(0) var<uniform> paint: PaintScene;
+@group(0) @binding(1) var scene_tex: texture_2d<f32>;
+@group(0) @binding(2) var scene_samp: sampler;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -117,7 +121,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
       hit_radius = paint.cursor_radius;
     }
   }
-  if (nearest > 1e8) { discard; }
+  if (nearest > 1e8 || abs(material - paint.render_material) > 0.25) { discard; }
 
   let position = ro + rd * nearest;
   let ba = hit_b - hit_a;
@@ -128,11 +132,26 @@ fn fs_main(in: VertexOut) -> FragmentOut {
   let diffuse = 0.24 + 0.76 * max(dot(normal, light), 0.0);
   let rim = pow(1.0 - max(dot(normal, -rd), 0.0), 3.0);
   let solid = hit_color * (diffuse + rim * 0.8) * 3.2;
-  let glass = mix(hit_color * 0.35, vec3f(0.7, 0.94, 1.0), rim) * (0.8 + diffuse);
-  let color = mix(solid, glass, step(0.5, material));
+  // Painted glass uses the monolith's optical model in screen space. The capsule
+  // normal bends the background, each color channel takes a slightly different
+  // path, and the chosen color acts as absorption inside the material.
+  let facing = clamp(dot(normal, -rd), 0.0, 1.0);
+  let fresnel = 0.04 + 0.96 * pow(1.0 - facing, 5.0);
+  let distortion = normal.xy * (0.012 + hit_radius * 0.018) / max(facing, 0.28);
+  let lod = clamp(hit_radius * 22.0, 0.0, max(paint.scene_levels - 1.0, 0.0));
+  let red = textureSampleLevel(scene_tex, scene_samp, clamp(in.uv + distortion * 1.12, vec2f(0.002), vec2f(0.998)), lod).r;
+  let green = textureSampleLevel(scene_tex, scene_samp, clamp(in.uv + distortion, vec2f(0.002), vec2f(0.998)), lod).g;
+  let blue = textureSampleLevel(scene_tex, scene_samp, clamp(in.uv + distortion * 0.88, vec2f(0.002), vec2f(0.998)), lod).b;
+  let absorption = exp(-(vec3f(1.0) - clamp(hit_color, vec3f(0.0), vec3f(1.0))) * hit_radius * 3.2);
+  let transmitted = vec3f(red, green, blue) * absorption;
+  let reflected = vec3f(0.34, 0.48, 0.68) + hit_color * 0.22;
+  let glass = mix(transmitted, reflected, fresnel) + rim * hit_color * 0.32;
+  let is_glass = step(0.5, material);
+  let color = mix(solid, glass, is_glass);
+  let alpha = 1.0;
   let clip = paint.view_projection * vec4f(position, 1.0);
   var out: FragmentOut;
-  out.color = vec4f(color, 1.0);
+  out.color = vec4f(color, alpha);
   out.depth = clip.z / clip.w;
   return out;
 }

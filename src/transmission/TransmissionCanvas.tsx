@@ -4,6 +4,7 @@ import { createRenderer } from './renderer'
 import { createPaintStore, hexToLinear } from './paint-store'
 
 type Tool = 'light' | 'glass' | 'orbit'
+const MAX_PAINT_SEGMENTS = 128
 const colors = ['#ff4fc3', '#69ddff', '#ffd66b', '#b8ff8a']
 
 export function TransmissionCanvas({ intensity }: { intensity: number }) {
@@ -76,7 +77,9 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
         radius: size / Math.max(1, canvas.clientHeight) * .52,
         material: tool === 'glass' ? 1 : 0,
       })
-      if (store.segments.length > 48) store.segments.splice(0, store.segments.length - 48)
+      if (store.segments.length > MAX_PAINT_SEGMENTS) {
+        store.segments.splice(0, store.segments.length - MAX_PAINT_SEGMENTS)
+      }
       store.version++
       context.save()
       context.lineCap = 'round'
@@ -127,6 +130,9 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
     const move = (event: PointerEvent) => {
       const next = placeCursor(event)
       if (!drawing || event.pointerId !== pointerId) return
+      // Do not spend a GPU segment on every high-frequency pointer event. Sampling
+      // by brush size preserves the same curve while keeping old strokes resident.
+      if (Math.hypot(next.x - last.x, next.y - last.y) < Math.max(2, size * .22)) return
       stroke(last, next)
       last = next
     }

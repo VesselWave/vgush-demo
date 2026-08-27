@@ -2,6 +2,7 @@
 import { env_lod, sample_env } from "./env-common.wgsl";
 
 const TRANSMISSION_SAMPLES: i32 = 11;
+const MAX_LIGHTS: i32 = 128;
 const GOLDEN_ANGLE: f32 = 2.39996323;
 
 struct CubeExit {
@@ -118,6 +119,10 @@ struct Glass {
   env_size: vec2f,
   texel_angle: f32,
   dispersion_spread: f32,
+  light_count: f32,
+  light_a: array<vec4f, 128>,
+  light_b: array<vec4f, 128>,
+  light_color: array<vec4f, 128>,
 };
 @group(0) @binding(0) var<uniform> glass: Glass;
 @group(0) @binding(1) var scene_tex: texture_2d<f32>;
@@ -138,6 +143,12 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f) -> VertexOu
   out.world_position = world.xyz;
   out.world_normal = (glass.model * vec4f(normal, 0.0)).xyz;
   return out;
+}
+
+fn segment_distance(p: vec3f, a: vec3f, b: vec3f) -> f32 {
+  let ab = b - a;
+  let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-5), 0.0, 1.0);
+  return length(p - (a + ab * t));
 }
 
 fn sample_transmission(ray: vec4f, lod: f32, fallback: vec3f) -> vec3f {
@@ -203,7 +214,27 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 
   transmitted *= exp(-glass.absorption * thickness);
 
-  let fresnel = dielectric_fresnel(glass.ior, facing);
+  // Nearby painted emitters light the volume and skim its polished faces. Only
+  // light strokes emit. Glass strokes remain visible through screen-space transmission.
+  var volume_light = vec3f(0.0);
+  var face_light = vec3f(0.0);
+  for (var i = 0; i < MAX_LIGHTS; i = i + 1) {
+    if (i >= i32(glass.light_count + 0.5)) { break; }
+    if (glass.light_b[i].w > 0.5) { continue; }
+    let radius = max(glass.light_a[i].w, 0.025);
+    let distance = segment_distance(in.world_position, glass.light_a[i].xyz, glass.light_b[i].xyz);
+    let reach = radius * radius / (distance * distance + radius * radius);
+    let light_center = (glass.light_a[i].xyz + glass.light_b[i].xyz) * 0.5;
+    let to_light = normalize(light_center - in.world_position);
+    let skim = pow(clamp(dot(normal, to_light) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+    volume_light += glass.light_color[i].rgb * reach * 2.8;
+    face_light += glass.light_color[i].rgb * reach * skim * 1.4;
+  }
+  transmitted += volume_light * exp(-glass.absorption * thickness * 0.45);
 
-  return vec4f(mix(transmitted, reflection, fresnel), 1.0);
+  let fresnel = dielectric_fresnel(glass.ior, facing);
+  let edge_glint = pow(1.0 - facing, 10.0) * vec3f(0.42, 0.62, 0.86);
+  let final_color = mix(transmitted, reflection, fresnel) + face_light + edge_glint;
+
+  return vec4f(final_color, 1.0);
 }
