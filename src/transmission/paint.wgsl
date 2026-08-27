@@ -2,6 +2,7 @@ const MAX_SEGMENTS: i32 = 128;
 
 struct PaintScene {
   view_projection: mat4x4f,
+  model: mat4x4f,
   camera_position: vec3f,
   tan_half_fov: f32,
   forward: vec3f,
@@ -77,6 +78,65 @@ fn capsule_hit(ro: vec3f, rd: vec3f, pa: vec3f, pb: vec3f, radius: f32) -> f32 {
   return min(sphere_hit(ro, rd, pa, radius), sphere_hit(ro, rd, pb, radius));
 }
 
+fn capsule_sdf(p: vec3f, a: vec3f, b: vec3f, radius: f32) -> f32 {
+  let ba = b - a;
+  let h = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-7), 0.0, 1.0);
+  return length(p - (a + ba * h)) - radius;
+}
+
+fn cube_sdf(p: vec3f) -> f32 {
+  let rotation = mat3x3f(paint.model[0].xyz, paint.model[1].xyz, paint.model[2].xyz);
+  let local = transpose(rotation) * (p - paint.model[3].xyz);
+  let q = abs(local) - vec3f(0.65);
+  return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+fn smooth_union(a: f32, b: f32, radius: f32) -> f32 {
+  let h = clamp(0.5 + 0.5 * (b - a) / radius, 0.0, 1.0);
+  return mix(b, a, h) - radius * h * (1.0 - h);
+}
+
+fn glass_sdf(p: vec3f) -> vec3f {
+  let cube_distance = cube_sdf(p);
+  var distance = cube_distance;
+  var stroke_distance = 1e6;
+  for (var i = 0; i < MAX_SEGMENTS; i = i + 1) {
+    if (i >= i32(paint.count + 0.5)) { break; }
+    if (paint.segment_b[i].w < 0.5) { continue; }
+    let radius = paint.segment_a[i].w;
+    let d = capsule_sdf(p, paint.segment_a[i].xyz, paint.segment_b[i].xyz, radius);
+    stroke_distance = min(stroke_distance, d);
+    distance = smooth_union(distance, d, min(radius * 0.72, 0.18));
+  }
+  if (paint.cursor_visible > 0.5 && paint.cursor.z > 0.5) {
+    let radius = paint.cursor_radius;
+    let d = length(p - world_from_uv(paint.cursor.xy)) - radius;
+    stroke_distance = min(stroke_distance, d);
+    distance = smooth_union(distance, d, min(radius * 0.72, 0.18));
+  }
+  return vec3f(distance, stroke_distance, cube_distance);
+}
+
+fn trace_glass_union(ro: vec3f, rd: vec3f) -> f32 {
+  var t = 0.05;
+  for (var step = 0; step < 44; step = step + 1) {
+    let d = glass_sdf(ro + rd * t).x;
+    if (d < 0.0015) { return t; }
+    t += max(d * 0.72, 0.003);
+    if (t > 12.0) { break; }
+  }
+  return 1e9;
+}
+
+fn glass_normal(p: vec3f) -> vec3f {
+  let e = 0.0025;
+  return normalize(vec3f(
+    glass_sdf(p + vec3f(e, 0.0, 0.0)).x - glass_sdf(p - vec3f(e, 0.0, 0.0)).x,
+    glass_sdf(p + vec3f(0.0, e, 0.0)).x - glass_sdf(p - vec3f(0.0, e, 0.0)).x,
+    glass_sdf(p + vec3f(0.0, 0.0, e)).x - glass_sdf(p - vec3f(0.0, 0.0, e)).x
+  ));
+}
+
 struct FragmentOut {
   @location(0) color: vec4f,
   @builtin(frag_depth) depth: f32,
@@ -121,13 +181,21 @@ fn fs_main(in: VertexOut) -> FragmentOut {
       hit_radius = paint.cursor_radius;
     }
   }
+  if (paint.render_material > 0.5) {
+    nearest = trace_glass_union(ro, rd);
+    material = 1.0;
+  }
   if (nearest > 1e8 || abs(material - paint.render_material) > 0.25) { discard; }
 
   let position = ro + rd * nearest;
+  // The union pass only adds the painted volume and its rounded join. The cube's
+  // regular transmission pass keeps ownership of untouched faces.
+  if (paint.render_material > 0.5 && glass_sdf(position).y > 0.14) { discard; }
   let ba = hit_b - hit_a;
   let h = clamp(dot(position - hit_a, ba) / max(dot(ba, ba), 1e-7), 0.0, 1.0);
   let centerline = hit_a + ba * h;
-  let normal = normalize(position - centerline);
+  let capsule_normal = normalize(position - centerline);
+  let normal = select(capsule_normal, glass_normal(position), paint.render_material > 0.5);
   let light = normalize(vec3f(-0.45, 0.8, 0.35));
   let diffuse = 0.24 + 0.76 * max(dot(normal, light), 0.0);
   let rim = pow(1.0 - max(dot(normal, -rd), 0.0), 3.0);
@@ -152,6 +220,9 @@ fn fs_main(in: VertexOut) -> FragmentOut {
   let clip = paint.view_projection * vec4f(position, 1.0);
   var out: FragmentOut;
   out.color = vec4f(color, alpha);
-  out.depth = clip.z / clip.w;
+  // The union and cube converge to the same surface at the join. Give the union
+  // deterministic ownership there instead of letting sub-pixel depth error stripe it.
+  let depth_bias = select(0.0, 0.0002, paint.render_material > 0.5);
+  out.depth = clip.z / clip.w - depth_bias;
   return out;
 }

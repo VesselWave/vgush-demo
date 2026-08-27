@@ -517,6 +517,7 @@ export function renderScene(
     });
     const paintUniforms = {
       view_projection: view.viewProjection,
+      model: MODEL_MATRIX,
       camera_position: view.position,
       tan_half_fov: view.tanHalfFov,
       forward: view.forward,
