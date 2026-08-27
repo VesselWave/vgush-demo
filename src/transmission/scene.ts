@@ -491,28 +491,35 @@ export function renderScene(
         segment.worldRadius = segment.radius * currentPlane.height;
       }
     }
-    const visibleSegments = paintStore?.segments.slice(-MAX_PAINT_SEGMENTS) ?? [];
-    const segmentA = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
-      const segment = visibleSegments[index];
-      return segment ? [...segment.worldFrom!, segment.worldRadius!] : [0, 0, 0, 0];
-    });
-    const segmentB = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
-      const segment = visibleSegments[index];
-      return segment ? [...segment.worldTo!, segment.material] : [0, 0, 0, 0];
-    });
-    const segmentC = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
-      const segment = visibleSegments[index];
-      return segment ? [...segment.color, 0] : [0, 0, 0, 0];
-    });
+    const allSegments = paintStore?.segments ?? [];
+    const lightSegments = allSegments.filter(segment => segment.material < .5).slice(-MAX_PAINT_SEGMENTS);
+    const glassSegments = allSegments.filter(segment => segment.material > .5).slice(-MAX_PAINT_SEGMENTS);
+    const packSegments = (segments: typeof allSegments) => {
+      const segmentA = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
+        const segment = segments[index];
+        return segment ? [...segment.worldFrom!, segment.worldRadius!] : [0, 0, 0, 0];
+      });
+      const segmentB = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
+        const segment = segments[index];
+        return segment ? [...segment.worldTo!, segment.material] : [0, 0, 0, 0];
+      });
+      const segmentC = Array.from({ length: MAX_PAINT_SEGMENTS }, (_, index) => {
+        const segment = segments[index];
+        return segment ? [...segment.color, 0] : [0, 0, 0, 0];
+      });
+      return { segmentA, segmentB, segmentC };
+    };
+    const lights = packSegments(lightSegments);
+    const glassPaint = packSegments(glassSegments);
     scene.floor.set({
       floor_uniforms: {
         view_projection: view.viewProjection,
         model: FLOOR_MATRIX,
         camera_position: view.position,
-        light_count: visibleSegments.length,
-        light_a: segmentA,
-        light_b: segmentB,
-        light_color: segmentC,
+        light_count: lightSegments.length,
+        light_a: lights.segmentA,
+        light_b: lights.segmentB,
+        light_color: lights.segmentC,
       },
     });
     const paintUniforms = {
@@ -523,7 +530,6 @@ export function renderScene(
       forward: view.forward,
       aspect: view.aspect,
       camera_right: view.right,
-      count: visibleSegments.length,
       camera_up: view.up,
       cursor_visible: paintStore?.cursorVisible ? 1 : 0,
       plane_center: [0, 0.05, 0],
@@ -535,12 +541,23 @@ export function renderScene(
       cursor: [...(paintStore?.cursor ?? [.5, .5]), paintStore?.cursorMaterial ?? 0, 0],
       cursor_color: [...(paintStore?.cursorColor ?? [1, 1, 1]), 0],
       scene_levels: targets.chain.length + 1,
-      segment_a: segmentA,
-      segment_b: segmentB,
-      segment_c: segmentC,
     };
-    scene.paintLight.set({ paint: { ...paintUniforms, render_material: 0 } });
-    scene.paintGlass.set({ paint: { ...paintUniforms, render_material: 1 } });
+    scene.paintLight.set({ paint: {
+      ...paintUniforms,
+      count: lightSegments.length,
+      segment_a: lights.segmentA,
+      segment_b: lights.segmentB,
+      segment_c: lights.segmentC,
+      render_material: 0,
+    } });
+    scene.paintGlass.set({ paint: {
+      ...paintUniforms,
+      count: glassSegments.length,
+      segment_a: glassPaint.segmentA,
+      segment_b: glassPaint.segmentB,
+      segment_c: glassPaint.segmentC,
+      render_material: 1,
+    } });
     scene.glass.set({
       glass: {
         ...GLASS,
@@ -552,10 +569,10 @@ export function renderScene(
         dispersion: controls.dispersion ? 1 : 0,
         refraction_mode: controls.refraction === "double" ? 1 : 0,
         scene_levels: targets.chain.length + 1,
-        light_count: visibleSegments.length,
-        light_a: segmentA,
-        light_b: segmentB,
-        light_color: segmentC,
+        light_count: lightSegments.length,
+        light_a: lights.segmentA,
+        light_b: lights.segmentB,
+        light_color: lights.segmentC,
       },
     });
 
@@ -563,6 +580,9 @@ export function renderScene(
       pass.draw(scene.background);
       pass.draw(scene.floor);
       pass.draw(scene.paintLight);
+      // Both painted materials enter the scene pyramid. The cube's glass pass
+      // then refracts them through the same transmission path.
+      pass.draw(scene.paintGlass);
     });
     for (let index = 0; index < targets.chain.length; index++) {
       const level = targets.chain[index];
@@ -581,7 +601,6 @@ export function renderScene(
   frame(gpu, (currentFrame) => {
     currentFrame.pass({ target: targets.hdr, clear: false }, (pass) => {
       pass.draw(scene.glass);
-      pass.draw(scene.paintGlass);
     });
     currentFrame.pass({ target: output }, (pass) => pass.draw(scene.present));
   });

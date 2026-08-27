@@ -96,25 +96,39 @@ fn smooth_union(a: f32, b: f32, radius: f32) -> f32 {
   return mix(b, a, h) - radius * h * (1.0 - h);
 }
 
+fn blend_radius(radius: f32) -> f32 {
+  // The stroke penetrates the cube by roughly one brush radius. The blend must
+  // exceed that overlap or the union still meets the face as a hard cut.
+  return min(radius * 3.0, 0.55);
+}
+
+fn segment_bound_radius(index: i32) -> f32 {
+  let radius = paint.segment_a[index].w;
+  return radius + blend_radius(radius) * 0.25;
+}
+
 fn glass_sdf(p: vec3f) -> vec3f {
   let cube_distance = cube_sdf(p);
-  var distance = cube_distance;
   var stroke_distance = 1e6;
+  var join_radius = 0.0;
   for (var i = 0; i < MAX_SEGMENTS; i = i + 1) {
     if (i >= i32(paint.count + 0.5)) { break; }
-    if (paint.segment_b[i].w < 0.5) { continue; }
     let radius = paint.segment_a[i].w;
     let d = capsule_sdf(p, paint.segment_a[i].xyz, paint.segment_b[i].xyz, radius);
-    stroke_distance = min(stroke_distance, d);
-    distance = smooth_union(distance, d, min(radius * 0.72, 0.18));
+    let blend = blend_radius(radius);
+    stroke_distance = select(d, smooth_union(stroke_distance, d, blend), join_radius > 0.0);
+    join_radius = max(join_radius, blend);
   }
   if (paint.cursor_visible > 0.5 && paint.cursor.z > 0.5) {
     let radius = paint.cursor_radius;
     let d = length(p - world_from_uv(paint.cursor.xy)) - radius;
-    stroke_distance = min(stroke_distance, d);
-    distance = smooth_union(distance, d, min(radius * 0.72, 0.18));
+    let blend = blend_radius(radius);
+    stroke_distance = select(d, smooth_union(stroke_distance, d, blend), join_radius > 0.0);
+    join_radius = max(join_radius, blend);
   }
-  return vec3f(distance, stroke_distance, cube_distance);
+  // Strokes blend into each other, but the cube remains a separate volume with
+  // a hard material boundary where the two touch.
+  return vec3f(stroke_distance, stroke_distance, cube_distance);
 }
 
 fn trace_glass_union(ro: vec3f, rd: vec3f) -> f32 {
@@ -158,7 +172,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     if (i >= i32(paint.count + 0.5)) { break; }
     let a = paint.segment_a[i].xyz;
     let b = paint.segment_b[i].xyz;
-    let t = capsule_hit(ro, rd, a, b, paint.segment_a[i].w);
+    let t = capsule_hit(ro, rd, a, b, segment_bound_radius(i));
     if (t > 0.0 && t < nearest) {
       nearest = t;
       hit_color = paint.segment_c[i].xyz;
@@ -171,7 +185,8 @@ fn fs_main(in: VertexOut) -> FragmentOut {
 
   if (paint.cursor_visible > 0.5) {
     let center = world_from_uv(paint.cursor.xy);
-    let t = sphere_hit(ro, rd, center, paint.cursor_radius);
+    let cursor_blend = blend_radius(paint.cursor_radius);
+    let t = sphere_hit(ro, rd, center, paint.cursor_radius + cursor_blend * 0.25);
     if (t > 0.0 && t < nearest) {
       nearest = t;
       hit_color = paint.cursor_color.rgb;
@@ -182,15 +197,15 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     }
   }
   if (paint.render_material > 0.5) {
+    // The union cannot extend beyond its source capsules. Reject the rest of the
+    // screen before the costly SDF march.
+    if (nearest > 1e8) { discard; }
     nearest = trace_glass_union(ro, rd);
     material = 1.0;
   }
   if (nearest > 1e8 || abs(material - paint.render_material) > 0.25) { discard; }
 
   let position = ro + rd * nearest;
-  // The union pass only adds the painted volume and its rounded join. The cube's
-  // regular transmission pass keeps ownership of untouched faces.
-  if (paint.render_material > 0.5 && glass_sdf(position).y > 0.14) { discard; }
   let ba = hit_b - hit_a;
   let h = clamp(dot(position - hit_a, ba) / max(dot(ba, ba), 1e-7), 0.0, 1.0);
   let centerline = hit_a + ba * h;
@@ -213,16 +228,16 @@ fn fs_main(in: VertexOut) -> FragmentOut {
   let absorption = exp(-(vec3f(1.0) - clamp(hit_color, vec3f(0.0), vec3f(1.0))) * hit_radius * 3.2);
   let transmitted = vec3f(red, green, blue) * absorption;
   let reflected = vec3f(0.34, 0.48, 0.68) + hit_color * 0.22;
-  let glass = mix(transmitted, reflected, fresnel) + rim * hit_color * 0.32;
+  let highlight = pow(max(dot(reflect(-light, normal), -rd), 0.0), 42.0);
+  let glass = mix(transmitted, reflected, fresnel)
+    + rim * hit_color * 0.32
+    + highlight * 0.55;
   let is_glass = step(0.5, material);
   let color = mix(solid, glass, is_glass);
   let alpha = 1.0;
   let clip = paint.view_projection * vec4f(position, 1.0);
   var out: FragmentOut;
   out.color = vec4f(color, alpha);
-  // The union and cube converge to the same surface at the join. Give the union
-  // deterministic ownership there instead of letting sub-pixel depth error stripe it.
-  let depth_bias = select(0.0, 0.0002, paint.render_material > 0.5);
-  out.depth = clip.z / clip.w - depth_bias;
+  out.depth = clip.z / clip.w;
   return out;
 }

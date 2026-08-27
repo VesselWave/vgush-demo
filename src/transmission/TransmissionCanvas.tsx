@@ -5,6 +5,7 @@ import { createPaintStore, hexToLinear } from './paint-store'
 
 type Tool = 'light' | 'glass' | 'orbit'
 const MAX_PAINT_SEGMENTS = 128
+const MAX_PAINT_LENGTH = 3
 const colors = ['#ff4fc3', '#69ddff', '#ffd66b', '#b8ff8a']
 
 export function TransmissionCanvas({ intensity }: { intensity: number }) {
@@ -77,8 +78,24 @@ export function TransmissionCanvas({ intensity }: { intensity: number }) {
         radius: size / Math.max(1, canvas.clientHeight) * .52,
         material: tool === 'glass' ? 1 : 0,
       })
-      if (store.segments.length > MAX_PAINT_SEGMENTS) {
-        store.segments.splice(0, store.segments.length - MAX_PAINT_SEGMENTS)
+      const material = tool === 'glass' ? 1 : 0
+      const strokeLength = (segment: (typeof store.segments)[number]) => Math.hypot(
+        segment.to[0] - segment.from[0],
+        segment.to[1] - segment.from[1],
+      )
+      let materialCount = 0
+      let totalLength = 0
+      for (const segment of store.segments) {
+        if (segment.material !== material) continue
+        materialCount++
+        totalLength += strokeLength(segment)
+      }
+      while (materialCount > MAX_PAINT_SEGMENTS || totalLength > MAX_PAINT_LENGTH) {
+        const oldest = store.segments.findIndex(segment => segment.material === material)
+        if (oldest < 0) break
+        totalLength -= strokeLength(store.segments[oldest])
+        store.segments.splice(oldest, 1)
+        materialCount--
       }
       store.version++
       context.save()
