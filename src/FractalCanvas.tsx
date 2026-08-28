@@ -1,102 +1,61 @@
 import { useEffect, useRef, useState } from 'react'
 import { getSharedGpuDevice } from './gpuDevice'
+import fractalSource from './fractal/source/fractal.wgsl?raw'
 
-const shader = /* wgsl */ `
-struct Uniforms {
-  resolution: vec2f,
-  yaw: f32,
-  pitch: f32,
-  zoom: f32,
-  time: f32,
+const vertex = /* wgsl */ `
+struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
 }
-@group(0) @binding(0) var<uniform> u: Uniforms;
-
-const V0 = vec3f(0.0, 1.0, 0.0);
-const V1 = vec3f(0.942809, -0.333333, 0.0);
-const V2 = vec3f(-0.471405, -0.333333, 0.816497);
-const V3 = vec3f(-0.471405, -0.333333, -0.816497);
-
-fn closestVertex(p: vec3f) -> vec3f {
-  var v = V0;
-  var score = dot(p, V0);
-  if (dot(p, V1) > score) { score = dot(p, V1); v = V1; }
-  if (dot(p, V2) > score) { score = dot(p, V2); v = V2; }
-  if (dot(p, V3) > score) { v = V3; }
-  return v;
-}
-
-fn distanceField(point: vec3f) -> f32 {
-  var p = point;
-  for (var i = 0; i < 9; i++) { p = p * 2.0 - closestVertex(p); }
-  let d = max(max(dot(-V0, p), dot(-V1, p)), max(dot(-V2, p), dot(-V3, p))) - 0.333333;
-  return d / 512.0;
-}
-
-fn normalAt(p: vec3f, e: f32) -> vec3f {
-  let a = vec3f(1.0, -1.0, -1.0);
-  let b = vec3f(-1.0, -1.0, 1.0);
-  let c = vec3f(-1.0, 1.0, -1.0);
-  let d = vec3f(1.0, 1.0, 1.0);
-  return normalize(a * distanceField(p + a*e) + b * distanceField(p + b*e) + c * distanceField(p + c*e) + d * distanceField(p + d*e));
-}
-
-@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-  var p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.));
-  return vec4f(p[i], 0., 1.);
-}
-
-@fragment fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
-  var screen = frag.xy / u.resolution * 2.0 - 1.0;
-  screen.y = -screen.y;
-  screen.x *= u.resolution.x / max(u.resolution.y, 1.0);
-
-  let cycle = fract(u.zoom);
-  let scale = exp2(-cycle);
-  let branch = vec3f(-0.471405, -0.333333, 0.816497);
-  let target = branch * (1.0 - scale);
-  let distance = 3.15 * scale;
-  let cp = cos(u.pitch); let sp = sin(u.pitch);
-  let cy = cos(u.yaw); let sy = sin(u.yaw);
-  let ro = target + vec3f(distance*sy*cp, distance*sp, distance*cy*cp);
-  let forward = normalize(target - ro);
-  let right = normalize(cross(forward, vec3f(0., 1., 0.)));
-  let up = cross(right, forward);
-  let rd = normalize(forward + (right*screen.x + up*screen.y) * 0.325 * scale);
-
-  var t = 0.0;
-  var hit = false;
-  var glow = 0.0;
-  var eps = 0.00002 * scale;
-  for (var step = 0; step < 120; step++) {
-    let d = distanceField(ro + rd*t);
-    eps = max(0.000002, 0.00015 * scale + t*0.00008);
-    glow += exp(-abs(d) / max(eps*7.0, 0.00001)) * 0.008;
-    if (d < eps) { hit = true; break; }
-    t += max(d*0.72, eps*0.4);
-    if (t > 6.0*scale) { break; }
-  }
-
-  var color = vec3f(glow * 0.2);
-  if (hit) {
-    let p = ro + rd*t;
-    let n = normalAt(p, eps*2.0);
-    let light = normalize(vec3f(-0.55, 0.78, 0.30));
-    let diffuse = max(dot(n, light), 0.0);
-    let rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-    color = vec3f(0.07 + diffuse*1.48 + rim*0.24);
-  }
-  color = color / (color + vec3f(0.72));
-  color = pow(color, vec3f(1.0/2.2));
-  return vec4f(color, 1.0);
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VertexOutput {
+  var positions = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.));
+  var output: VertexOutput;
+  output.position = vec4f(positions[i], 0., 1.);
+  output.uv = positions[i] * vec2f(.5, -.5) + vec2f(.5);
+  return output;
 }`
 
-export function FractalCanvas({ zoom, onZoomChange }: { zoom: number; onZoomChange: (value: number) => void }) {
+const shader = `${vertex}
+${fractalSource
+  .replace('pitch: f32,', 'pitch: f32,\n  zoom: f32,\n  time: f32,')
+  .replace('var p = point;', `var p = point;
+  // Spend recursion where the camera is headed. Peripheral branches keep a
+  // cheaper silhouette while the V2 region retains the full detail budget.
+  let levels = select(10, 13, distance(point, V2) < 1.35);
+  var divisor = 1.0;`)
+  .replace('for (var level = 0; level < 6; level++) {', `for (var level = 0; level < 13; level++) {
+    if (level >= levels) { break; }
+    divisor *= 2.0;`)
+  .replace('return d / 64.0;', 'return d / divisor;')
+  .replace('@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {', 'fn renderFractal(uv: vec2f, zoomScale: f32, orbitTarget: vec3f) -> vec4f {')
+  .replace('let orbitTarget = vec3f(0.0, 0.18, 0.0);', '')
+  .replace('let orbitOffset = vec3f(3.15 * sy * cp, 3.15 * sp, 3.15 * cy * cp);', 'let orbitOffset = vec3f(3.15 * sy * cp, 3.15 * sp, 3.15 * cy * cp) * zoomScale;')
+  .replace('let color = vec3f(ao * (0.11 + 1.55 * diffuse));', 'var color = vec3f(ao * (0.11 + 1.55 * diffuse));')}
+
+@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let infiniteZoom = params.zoom + params.time * 0.16;
+  // Begin one level inside the fractal and travel to level three. Rebasing two
+  // levels maps that descendant back onto the level-one starting frame. This
+  // keeps more zoomed-out geometry in use and reaches the seam one level sooner.
+  let phase = 1.0 + fract(infiniteZoom * 0.5) * 2.0;
+  let scale = exp2(-phase);
+  let baseTarget = vec3f(0.0, 0.18, 0.0);
+  let nestedTarget = mix(baseTarget, V2, 1.0 - scale);
+  // Camera distance follows the recursive scale, but projection does not. The
+  // level-three descendant maps onto the next cycle's level-one starting view,
+  // so the loop keeps a wider view without returning to the distant root.
+  return renderFractal(uv, scale, nestedTarget);
+}`
+
+export function FractalCanvas({ zoom, paused, onZoomChange }: { zoom: number; paused: boolean; onZoomChange: (value: number) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const zoomRef = useRef(zoom)
+  const pausedRef = useRef(paused)
   const orbitRef = useRef({ yaw: .58, pitch: .24 })
   const [error, setError] = useState('')
 
   useEffect(() => { zoomRef.current = zoom }, [zoom])
+  useEffect(() => { pausedRef.current = paused }, [paused])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -138,18 +97,25 @@ export function FractalCanvas({ zoom, onZoomChange }: { zoom: number; onZoomChan
       const format = navigator.gpu.getPreferredCanvasFormat()
       context.configure({ device, format, alphaMode: 'opaque' })
       const module = device.createShaderModule({ code: shader })
-      const pipeline = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' }, fragment: { module, entryPoint: 'fs', targets: [{ format }] } })
+      const compilation = await module.getCompilationInfo()
+      const shaderErrors = compilation.messages.filter((message: { type: string }) => message.type === 'error')
+      if (shaderErrors.length) throw new Error(shaderErrors.map((message: { lineNum: number; message: string }) => `Shader line ${message.lineNum}: ${message.message}`).join('\n'))
+      const pipeline = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' }, fragment: { module, entryPoint: 'fs_main', targets: [{ format }] } })
       const uniform = device.createBuffer({ size: 32, usage: 0x40 | 0x08 })
       const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniform } }] })
-      const started = performance.now()
+      let lastFrame = performance.now()
+      let elapsed = 0
       const draw = () => {
         if (disposed) return
         const dpr = Math.min(devicePixelRatio, 1.6)
         const width = Math.max(1, Math.floor(canvas!.clientWidth*dpr))
         const height = Math.max(1, Math.floor(canvas!.clientHeight*dpr))
         if (canvas!.width !== width || canvas!.height !== height) { canvas!.width = width; canvas!.height = height }
+        const now = performance.now()
+        if (!pausedRef.current) elapsed += Math.min(now - lastFrame, 50) / 1000
+        lastFrame = now
         const { yaw, pitch } = orbitRef.current
-        device.queue.writeBuffer(uniform, 0, new Float32Array([width, height, yaw, pitch, zoomRef.current, (performance.now()-started)/1000, 0, 0]))
+        device.queue.writeBuffer(uniform, 0, new Float32Array([width, height, yaw, pitch, zoomRef.current, elapsed, 0, 0]))
         const encoder = device.createCommandEncoder()
         const pass = encoder.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r:0, g:0, b:0, a:1 } }] })
         pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.draw(3); pass.end()

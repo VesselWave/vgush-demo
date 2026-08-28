@@ -23,6 +23,7 @@ const demos: Demo[] = [
 
 function DemoRenderer({ scene, intensity = 1, fullscreen = false }: { scene: DemoScene; intensity?: number; fullscreen?: boolean }) {
   const [zoom, setZoom] = useState(0)
+  const [fractalPaused, setFractalPaused] = useState(false)
   const changeZoom = useCallback((value: number) => setZoom(value), [])
 
   useEffect(() => {
@@ -39,9 +40,10 @@ function DemoRenderer({ scene, intensity = 1, fullscreen = false }: { scene: Dem
 
   if (scene === 'prism') return <TransmissionCanvas intensity={intensity} />
   if (scene === 'fractal') return <div className={`fractal-shell${fullscreen ? ' fullscreen' : ''}`}>
-    <FractalCanvas zoom={zoom} onZoomChange={changeZoom} />
+    <FractalCanvas zoom={zoom} paused={fractalPaused} onZoomChange={changeZoom} />
     <div className="fractal-controls">
-      <span>Drag to orbit · + / − to zoom · 0 to reset</span>
+      <span>{fractalPaused ? 'Paused for capture' : 'Auto-zooming'} · drag to orbit · + / − to steer</span>
+      <button className="pause-fractal" onClick={() => setFractalPaused(value => !value)} aria-label={fractalPaused ? 'Resume automatic zoom' : 'Pause automatic zoom'}>{fractalPaused ? 'Play' : 'Pause'}</button>
       <button onClick={() => setZoom(value => value - .12)} aria-label="Zoom out">−</button>
       <button onClick={() => setZoom(0)} aria-label="Reset zoom">0</button>
       <button onClick={() => setZoom(value => value + .12)} aria-label="Zoom in">+</button>
