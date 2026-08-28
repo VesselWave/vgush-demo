@@ -101,18 +101,11 @@ fn sky(rd: vec3f) -> vec3f {
   return vec3f(0.003, 0.004, 0.007) + vec3f(0.014, 0.018, 0.026) * horizon;
 }
 
-@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-  // One octave per cycle. At phase 1 the camera is exactly the transformed
-  // phase-0 camera inside V2, so wrapping the phase changes no ray in local space.
-  let journey = params.zoom + params.time * 0.115;
-  let phase = fract(journey);
+fn renderView(uv: vec2f, phase: f32, cellCenter: vec3f, cellScale: f32) -> vec4f {
+  activeCellCenter = cellCenter;
+  activeCellScale = cellScale;
   let cameraScale = exp2(-phase);
   let childCenter = V2 * (1.0 - cameraScale);
-  // Keep the root uncut for most of the flight. Once the destination child
-  // fills the frame, close the cell around it before the octave wraps.
-  let cellMix = smoothstep(0.975, 0.9995, phase);
-  activeCellScale = mix(1.0, 0.5, cellMix);
-  activeCellCenter = V2 * (1.0 - activeCellScale);
 
   let cp = cos(params.pitch);
   let sp = sin(params.pitch);
@@ -169,4 +162,24 @@ fn sky(rd: vec3f) -> vec3f {
   color = color / (color + vec3f(1.0));
   color = pow(color, vec3f(0.4545));
   return vec4f(color, 1.0);
+}
+
+fn screenNoise(uv: vec2f) -> f32 {
+  let pixel = floor(uv * params.resolution);
+  return fract(52.9829189 * fract(dot(pixel, vec2f(0.06711056, 0.00583715))));
+}
+
+@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
+  // Most frames use one raymarch. Near the octave boundary a second raymarch
+  // renders only the destination child. A static screen-space dissolve replaces
+  // the moving clipping plane, then lands on the exact next-cycle image.
+  let phase = fract(params.zoom + params.time * 0.115);
+  let root = renderView(uv, phase, vec3f(0.0), 1.0);
+  if (phase < 0.88) { return root; }
+
+  let child = renderView(uv, phase, V2 * 0.5, 0.5);
+  let fade = smoothstep(0.88, 0.995, phase);
+  let noise = screenNoise(uv);
+  let dissolve = smoothstep(noise - 0.08, noise + 0.08, fade * 1.16 - 0.08);
+  return mix(root, child, dissolve);
 }
