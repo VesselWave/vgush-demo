@@ -15,37 +15,7 @@ struct VertexOutput {
   return output;
 }`
 
-const shader = `${vertex}
-${fractalSource
-  .replace('pitch: f32,', 'pitch: f32,\n  zoom: f32,\n  time: f32,')
-  .replace('var p = point;', `var p = point;
-  // Spend recursion where the camera is headed. Peripheral branches keep a
-  // cheaper silhouette while the V2 region retains the full detail budget.
-  let levels = select(10, 13, distance(point, V2) < 1.35);
-  var divisor = 1.0;`)
-  .replace('for (var level = 0; level < 6; level++) {', `for (var level = 0; level < 13; level++) {
-    if (level >= levels) { break; }
-    divisor *= 2.0;`)
-  .replace('return d / 64.0;', 'return d / divisor;')
-  .replace('@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {', 'fn renderFractal(uv: vec2f, zoomScale: f32, orbitTarget: vec3f) -> vec4f {')
-  .replace('let orbitTarget = vec3f(0.0, 0.18, 0.0);', '')
-  .replace('let orbitOffset = vec3f(3.15 * sy * cp, 3.15 * sp, 3.15 * cy * cp);', 'let orbitOffset = vec3f(3.15 * sy * cp, 3.15 * sp, 3.15 * cy * cp) * zoomScale;')
-  .replace('let color = vec3f(ao * (0.11 + 1.55 * diffuse));', 'var color = vec3f(ao * (0.11 + 1.55 * diffuse));')}
-
-@fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-  let infiniteZoom = params.zoom + params.time * 0.16;
-  // Begin one level inside the fractal and travel to level three. Rebasing two
-  // levels maps that descendant back onto the level-one starting frame. This
-  // keeps more zoomed-out geometry in use and reaches the seam one level sooner.
-  let phase = 1.0 + fract(infiniteZoom * 0.5) * 2.0;
-  let scale = exp2(-phase);
-  let baseTarget = vec3f(0.0, 0.18, 0.0);
-  let nestedTarget = mix(baseTarget, V2, 1.0 - scale);
-  // Camera distance follows the recursive scale, but projection does not. The
-  // level-three descendant maps onto the next cycle's level-one starting view,
-  // so the loop keeps a wider view without returning to the distant root.
-  return renderFractal(uv, scale, nestedTarget);
-}`
+const shader = `${vertex}\n${fractalSource}`
 
 export function FractalCanvas({ zoom, paused, onZoomChange }: { zoom: number; paused: boolean; onZoomChange: (value: number) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -65,6 +35,7 @@ export function FractalCanvas({ zoom, paused, onZoomChange }: { zoom: number; pa
     let activePointer: number | null = null
     let lastX = 0
     let lastY = 0
+    const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
 
     const pointerDown = (event: PointerEvent) => {
       activePointer = event.pointerId
@@ -112,7 +83,7 @@ export function FractalCanvas({ zoom, paused, onZoomChange }: { zoom: number; pa
         const height = Math.max(1, Math.floor(canvas!.clientHeight*dpr))
         if (canvas!.width !== width || canvas!.height !== height) { canvas!.width = width; canvas!.height = height }
         const now = performance.now()
-        if (!pausedRef.current) elapsed += Math.min(now - lastFrame, 50) / 1000
+        if (!pausedRef.current && !reduceMotion) elapsed += Math.min(now - lastFrame, 50) / 1000
         lastFrame = now
         const { yaw, pitch } = orbitRef.current
         device.queue.writeBuffer(uniform, 0, new Float32Array([width, height, yaw, pitch, zoomRef.current, elapsed, 0, 0]))
