@@ -109,7 +109,7 @@ export function createRenderer({ canvas, paintStore, initialControls }: Renderer
 
     gpu = nextGpu;
     try {
-      output = surface(gpu, canvas, { dpr: [1, 2] });
+      output = surface(gpu, canvas, { dpr: [1, 1.5] });
       const nextScene = await createScene(gpu, output);
       if (disposed) return;
       scene = nextScene;

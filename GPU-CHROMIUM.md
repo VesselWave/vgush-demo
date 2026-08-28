@@ -1,10 +1,11 @@
-# Run Chromium with the Intel Vulkan GPU
+# Run Chromium with the NVIDIA Vulkan GPU
 
-Launch Chromium with the Intel Vulkan GPU and expose the Chrome DevTools Protocol on port 9333:
+Launch Chromium with the NVIDIA Vulkan GPU and expose the Chrome DevTools Protocol on port 9333:
 
 ```bash
-env DRI_PRIME=8086:a78b! chromium \
+env DRI_PRIME=10de:28e0! chromium \
   --enable-features=Vulkan \
+  --use-angle=vulkan \
   --ozone-platform=x11 \
   --remote-debugging-port=9333 \
   --user-data-dir=/tmp/gpu-chromium
